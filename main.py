@@ -29,17 +29,19 @@ def get_bin():
     r.raise_for_status()
     root = r.json()
 
-    # Formato esperado:
-    # {
-    #   "record": {
-    #       "cliente1": {...},
-    #       "cliente2": {...}
-    #   },
-    #   "metadata": {...}
-    # }
+    # Pegamos o "record" externo
     data = root.get("record", {})
     if not isinstance(data, dict):
         data = {}
+
+    # Se dentro dele existir outro "record" que também é um dict,
+    # e esse "record interno" parece ser a tabela de clientes,
+    # usamos ele como base.
+    if "record" in data and isinstance(data["record"], dict):
+        inner = data["record"]
+        if all(isinstance(v, dict) for v in inner.values()):
+            data = inner
+
     return data
 
 
