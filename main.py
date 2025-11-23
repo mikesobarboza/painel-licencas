@@ -5,7 +5,8 @@ from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from dotenv import load_dotenv
 
-# Carrega variáveis do arquivo .env
+# Carrega variáveis do arquivo .env (local).
+# No Render, ele usa as variáveis de ambiente configuradas no painel.
 load_dotenv()
 
 app = FastAPI()
@@ -14,19 +15,28 @@ BIN_ID = os.getenv("JSONBIN_BIN_ID")
 MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
 
 if not BIN_ID or not MASTER_KEY:
-    raise RuntimeError("Defina JSONBIN_BIN_ID e JSONBIN_MASTER_KEY no arquivo .env.")
+    raise RuntimeError(
+        "Defina JSONBIN_BIN_ID e JSONBIN_MASTER_KEY no arquivo .env "
+        "ou nas variáveis de ambiente da hospedagem."
+    )
 
 JSONBIN_URL = f"https://api.jsonbin.io/v3/b/{BIN_ID}"
 
 
-ddef get_bin():
+def get_bin():
     """Lê o JSON atual do JSONBin e devolve o dicionário de licenças."""
     r = requests.get(JSONBIN_URL, headers={"X-Master-Key": MASTER_KEY})
     r.raise_for_status()
     root = r.json()
 
-    # Agora usamos só UM nível de "record":
-    # { "record": { "cliente1": {...}, "cliente2": {...} } }
+    # Formato esperado:
+    # {
+    #   "record": {
+    #       "cliente1": {...},
+    #       "cliente2": {...}
+    #   },
+    #   "metadata": {...}
+    # }
     data = root.get("record", {})
     if not isinstance(data, dict):
         data = {}
@@ -141,6 +151,8 @@ def criar(
     expira: str = Form(...),
 ):
     data = get_bin()
+
+    # Se já existir, atualiza expiração e reativa
     if cliente in data:
         data[cliente]["expira"] = expira
         data[cliente]["ativo"] = True
@@ -150,6 +162,7 @@ def criar(
             "hwid": "",
             "ativo": True,
         }
+
     save_bin(data)
     return RedirectResponse(url="/", status_code=302)
 
