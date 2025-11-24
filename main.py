@@ -24,23 +24,24 @@ JSONBIN_URL = f"https://api.jsonbin.io/v3/b/{BIN_ID}"
 
 
 def get_bin():
-    """Lê o JSON atual do JSONBin e devolve o dicionário de licenças."""
+    """Lê o JSON atual do JSONBin e devolve SOMENTE o dicionário de licenças."""
     r = requests.get(JSONBIN_URL, headers={"X-Master-Key": MASTER_KEY})
     r.raise_for_status()
     root = r.json()
 
-    # Pegamos o "record" externo
+    # Formato desejado (novo):
+    # { "record": { "cliente1": {...}, "cliente2": {...} } }
+
     data = root.get("record", {})
+
+    # Caso antigo: veio assim:
+    # { "record": { "record": { ...clientes... }, "metadata": {...} } }
+    if isinstance(data, dict) and "record" in data and "metadata" in data:
+        data = data.get("record", {})
+
+    # Garantia extra: se ainda não for dict, zera
     if not isinstance(data, dict):
         data = {}
-
-    # Se dentro dele existir outro "record" que também é um dict,
-    # e esse "record interno" parece ser a tabela de clientes,
-    # usamos ele como base.
-    if "record" in data and isinstance(data["record"], dict):
-        inner = data["record"]
-        if all(isinstance(v, dict) for v in inner.values()):
-            data = inner
 
     return data
 
