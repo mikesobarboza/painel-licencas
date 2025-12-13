@@ -1,68 +1,100 @@
 import os
-import json
 import requests
 from fastapi import FastAPI, Form, Query, Header
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from dotenv import load_dotenv
 
-# Carrega variáveis do arquivo .env (local).
-# No Render, ele usa as variáveis de ambiente configuradas no painel.
 load_dotenv()
 
 app = FastAPI()
 
 BIN_ID = os.getenv("JSONBIN_BIN_ID")
 MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
-REPAIR_TOKEN = os.getenv("REPAIR_TOKEN")  # <- token de proteção da rota /repair
+REPAIR_TOKEN = os.getenv("REPAIR_TOKEN")
 
 if not BIN_ID or not MASTER_KEY:
     raise RuntimeError(
-        "Defina JSONBIN_BIN_ID e JSONBIN_MASTER_KEY no arquivo .env "
-        "ou nas variáveis de ambiente da hospedagem."
+        "Defina JSONBIN_BIN_ID e JSONBIN_MASTER_KEY no .env "
+        "ou nas variáveis de ambiente do Render."
     )
 
-# JSONBin v3:
-# - Leitura recomendada: /latest
-# - Update: PUT no endpoint do bin (sem /latest)
 JSONBIN_URL = f"https://api.jsonbin.io/v3/b/{BIN_ID}"
 JSONBIN_READ_URL = f"https://api.jsonbin.io/v3/b/{BIN_ID}/latest"
 
 
-def unwrap_record(data):
+def normalize_licenses(obj):
     """
-    Descasca "record.record.record..." até chegar no dicionário real de clientes.
-    Ex.: {"record": {"record": {"cliente1": {...}}}} -> {"cliente1": {...}}
+    Normaliza qualquer bagunça do tipo:
+    - record.record.record...
+    - presença de metadata em qualquer nível
+    - mistura de {"record": {...}, "clienteX": {...}} (seu caso do cliente002)
+
+    Resultado final: dict plano {cliente: {expira, hwid, ativo}}
     """
-    while isinstance(data, dict) and set(data.keys()) == {"record"}:
-        data = data["record"]
-    return data
+    if not isinstance(obj, dict):
+        return {}
+
+    result = {}
+
+    # 1) Se existe "record" e é dict, normaliza ele e mescla no resultado
+    rec = obj.get("record")
+    if isinstance(rec, dict):
+        result.update(normalize_licenses(rec))
+
+    # 2) Mescla chaves do nível atual, ignorando wrappers
+    for k, v in obj.items():
+        if k in ("record", "metadata"):
+            continue
+
+        # Se por acaso aparecer outro wrapper no meio, normaliza
+        if isinstance(v, dict) and ("record" in v or "metadata" in v):
+            # cuidado: só trata como wrapper se ele tiver cara de wrapper,
+            # mas aqui a gente pode ser pragmático e normalizar mesmo assim.
+            # Se v for um cliente real {expira, hwid, ativo}, normalize_licenses(v) daria {}
+            # então a gente testa o formato de cliente antes.
+            if any(key in v for key in ("expira", "hwid", "ativo")):
+                result[k] = v
+            else:
+                # tenta extrair algo útil
+                extracted = normalize_licenses(v)
+                if extracted:
+                    # se extraiu clientes, mescla
+                    result.update(extracted)
+                else:
+                    # se não extraiu, ignora
+                    pass
+        else:
+            # Mantém o valor bruto (normalmente é dict de cliente)
+            result[k] = v
+
+    # 3) Por garantia: só mantém entradas que parecem cliente (dict)
+    cleaned = {}
+    for cliente, info in result.items():
+        if isinstance(info, dict):
+            cleaned[cliente] = {
+                "expira": info.get("expira", ""),
+                "hwid": info.get("hwid", ""),
+                "ativo": info.get("ativo", True),
+            }
+
+    return cleaned
 
 
 def get_bin():
-    """Lê o JSON atual do JSONBin e devolve SOMENTE o dicionário de licenças."""
     r = requests.get(
         JSONBIN_READ_URL,
         headers={"X-Master-Key": MASTER_KEY},
-        timeout=15,
+        timeout=20,
     )
     r.raise_for_status()
     root = r.json()
 
     data = root.get("record", {})
-    data = unwrap_record(data)
-
-    if not isinstance(data, dict):
-        data = {}
-
-    return data
+    return normalize_licenses(data)
 
 
 def save_bin(data: dict):
-    """
-    Salva o dicionário de licenças de volta no JSONBin.
-    IMPORTANTE: no JSONBin v3, o PUT deve receber o JSON puro,
-    e não {"record": ...}.
-    """
+    # JSONBin v3: PUT recebe o JSON PURO (sem wrapper {"record": ...})
     if not isinstance(data, dict):
         data = {}
 
@@ -72,8 +104,8 @@ def save_bin(data: dict):
             "X-Master-Key": MASTER_KEY,
             "Content-Type": "application/json",
         },
-        json=data,  # ✅ JSON puro
-        timeout=15,
+        json=data,
+        timeout=20,
     )
     r.raise_for_status()
 
@@ -84,10 +116,6 @@ def home():
 
     rows = ""
     for cliente, info in licencas.items():
-        # proteção extra caso algum item não seja dict
-        if not isinstance(info, dict):
-            continue
-
         expira = info.get("expira", "")
         hwid = info.get("hwid", "")
         ativo = info.get("ativo", True)
@@ -158,7 +186,7 @@ def home():
       </form>
 
       <div class="hint">
-        Dica: a rota <b>/repair</b> limpa o JSONBin (precisa de token).
+        Dica: rode <b>/repair</b> uma vez pra normalizar o JSONBin.
       </div>
 
       <h2>Licenças cadastradas</h2>
@@ -179,41 +207,27 @@ def home():
 
 
 @app.post("/criar")
-def criar(
-    cliente: str = Form(...),
-    expira: str = Form(...),
-):
+def criar(cliente: str = Form(...), expira: str = Form(...)):
     data = get_bin()
-
     cliente = cliente.strip()
 
-    # Se já existir, atualiza expiração e reativa
-    if cliente in data and isinstance(data.get(cliente), dict):
+    if cliente in data:
         data[cliente]["expira"] = expira
         data[cliente]["ativo"] = True
-        # mantém hwid se existir
         data[cliente].setdefault("hwid", "")
     else:
-        data[cliente] = {
-            "expira": expira,
-            "hwid": "",
-            "ativo": True,
-        }
+        data[cliente] = {"expira": expira, "hwid": "", "ativo": True}
 
     save_bin(data)
     return RedirectResponse(url="/", status_code=302)
 
 
 @app.post("/editar")
-def editar(
-    cliente: str = Form(...),
-    expira: str = Form(...),
-    ativo: str = Form(...),
-):
+def editar(cliente: str = Form(...), expira: str = Form(...), ativo: str = Form(...)):
     data = get_bin()
     cliente = cliente.strip()
 
-    if cliente not in data or not isinstance(data.get(cliente), dict):
+    if cliente not in data:
         return RedirectResponse(url="/", status_code=302)
 
     data[cliente]["expira"] = expira
@@ -224,19 +238,16 @@ def editar(
     return RedirectResponse(url="/", status_code=302)
 
 
-# ===========================
-#  ROTA DE REPARO DO JSONBIN
-# ===========================
 @app.get("/repair")
 def repair(
     token: str = Query(default="", description="Token de reparo"),
     x_repair_token: str = Header(default="", alias="X-Repair-Token"),
 ):
     """
-    Limpa a estrutura do bin caso ele tenha virado record.record.record...
-    Protegido por token via:
-      - query param ?token=...
-      - OU header X-Repair-Token: ...
+    Normaliza o bin e salva no formato correto (plano).
+    Proteção por token via:
+      - /repair?token=...
+      - Header X-Repair-Token: ...
     """
     if not REPAIR_TOKEN:
         return JSONResponse(
@@ -246,14 +257,9 @@ def repair(
 
     provided = token or x_repair_token
     if provided != REPAIR_TOKEN:
-        return JSONResponse(
-            {"ok": False, "error": "Token inválido."},
-            status_code=403,
-        )
+        return JSONResponse({"ok": False, "error": "Token inválido."}, status_code=403)
 
-    # lê, desembrulha automaticamente (get_bin já faz isso),
-    # e salva “flat” (save_bin salva sem wrapper)
     data = get_bin()
     save_bin(data)
 
-    return {"ok": True, "clientes": len(data), "mensagem": "Bin reparado e normalizado com sucesso."}
+    return {"ok": True, "clientes": len(data), "mensagem": "Bin normalizado e salvo (sem record/metadata)."}
