@@ -127,3 +127,173 @@ def home():
 
             <form method="post" action="/limpar_hwid" style="display:inline; margin-right:6px;">
               <input type="hidden" name="cliente" value="{cliente}">
+              <button type="submit" title="Zera o HWID desse cliente">Limpar HWID</button>
+            </form>
+
+            <form method="post" action="/excluir" style="display:inline;"
+                  onsubmit="return confirm('Excluir o cliente: {cliente}? Essa ação não tem Ctrl+Z 😅');">
+              <input type="hidden" name="cliente" value="{cliente}">
+              <button type="submit" style="background:#b00020; color:white; border:none; padding:6px 10px; cursor:pointer;">
+                Excluir
+              </button>
+            </form>
+          </td>
+        </tr>
+        """
+
+    html = f"""
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Painel de Licenças</title>
+      <style>
+        body {{
+          font-family: Arial, sans-serif;
+          padding: 20px;
+        }}
+        table {{
+          border-collapse: collapse;
+          margin-top: 20px;
+          min-width: 780px;
+        }}
+        th, td {{
+          border: 1px solid #ccc;
+          padding: 6px 10px;
+          text-align: left;
+          vertical-align: top;
+        }}
+        th {{
+          background: #eee;
+        }}
+        h1, h2 {{ margin-bottom: 10px; }}
+        form {{ margin: 0; }}
+        .hint {{
+          font-size: 12px;
+          color: #666;
+          margin-top: 8px;
+        }}
+        button {{
+          padding: 6px 10px;
+        }}
+        input[type="date"] {{
+          padding: 4px 6px;
+        }}
+        select {{
+          padding: 4px 6px;
+        }}
+      </style>
+    </head>
+    <body>
+      <h1>Painel de Licenças</h1>
+
+      <h2>Criar nova licença</h2>
+      <form method="post" action="/criar">
+        Cliente:
+        <input name="cliente" required>
+        Expira:
+        <input type="date" name="expira" required>
+        <button type="submit">Criar / Atualizar</button>
+      </form>
+
+      <div class="hint">
+        Dica: rode <b>/repair</b> uma vez pra normalizar o JSONBin.
+      </div>
+
+      <h2>Licenças cadastradas</h2>
+      <table>
+        <tr>
+          <th>Cliente</th>
+          <th>Expira</th>
+          <th>HWID</th>
+          <th>Status</th>
+          <th>Ações</th>
+        </tr>
+        {rows}
+      </table>
+    </body>
+    </html>
+    """
+    return html
+
+
+@app.post("/criar")
+def criar(cliente: str = Form(...), expira: str = Form(...)):
+    data = get_bin()
+    cliente = cliente.strip()
+
+    if cliente in data:
+        data[cliente]["expira"] = expira
+        data[cliente]["ativo"] = True
+        data[cliente].setdefault("hwid", "")
+    else:
+        data[cliente] = {"expira": expira, "hwid": "", "ativo": True}
+
+    save_bin(data)
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.post("/editar")
+def editar(cliente: str = Form(...), expira: str = Form(...), ativo: str = Form(...)):
+    data = get_bin()
+    cliente = cliente.strip()
+
+    if cliente not in data:
+        return RedirectResponse(url="/", status_code=302)
+
+    data[cliente]["expira"] = expira
+    data[cliente]["ativo"] = (ativo == "true")
+    data[cliente].setdefault("hwid", "")
+
+    save_bin(data)
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.post("/limpar_hwid")
+def limpar_hwid(cliente: str = Form(...)):
+    data = get_bin()
+    cliente = cliente.strip()
+
+    if cliente in data:
+        data[cliente]["hwid"] = ""
+        save_bin(data)
+
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.post("/excluir")
+def excluir(cliente: str = Form(...)):
+    data = get_bin()
+    cliente = cliente.strip()
+
+    if cliente in data:
+        del data[cliente]
+        save_bin(data)
+
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/repair")
+def repair(
+    token: str = Query(default="", description="Token de reparo"),
+    x_repair_token: str = Header(default="", alias="X-Repair-Token"),
+):
+    """
+    Normaliza o bin e salva no formato correto (plano).
+    Proteção por token via:
+      - /repair?token=...
+      - Header X-Repair-Token: ...
+    """
+    if not REPAIR_TOKEN:
+        return JSONResponse(
+            {"ok": False, "error": "REPAIR_TOKEN não configurado no ambiente."},
+            status_code=403,
+        )
+
+    provided = token or x_repair_token
+    if provided != REPAIR_TOKEN:
+        return JSONResponse({"ok": False, "error": "Token inválido."}, status_code=403)
+
+    data = get_bin()
+    save_bin(data)
+
+    return {"ok": True, "clientes": len(data), "mensagem": "Bin normalizado e salvo (sem record/metadata)."}
