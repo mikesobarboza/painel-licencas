@@ -372,23 +372,8 @@ def login_page():
     return html
 
 
-@app.get("/debug-senha")
-def debug_senha():
-    """Rota temporária para debug - REMOVER EM PRODUÇÃO"""
-    return {
-        "senha_esperada": PAINEL_PASSWORD,
-        "tamanho": len(PAINEL_PASSWORD),
-        "tipo": type(PAINEL_PASSWORD).__name__
-    }
-
-
 @app.post("/login")
 def do_login(response: Response, password: str = Form(...)):
-    # Log para debug
-    print(f"DEBUG - Senha recebida: '{password}' (len={len(password)})")
-    print(f"DEBUG - Senha esperada: '{PAINEL_PASSWORD}' (len={len(PAINEL_PASSWORD)})")
-    print(f"DEBUG - São iguais? {password == PAINEL_PASSWORD}")
-    
     if password == PAINEL_PASSWORD:
         # Cria token de sessão
         session_token = secrets.token_urlsafe(32)
