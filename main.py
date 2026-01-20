@@ -1,6 +1,7 @@
 import os
+import secrets
 import requests
-from fastapi import FastAPI, Form, Query, Header
+from fastapi import FastAPI, Form, Query, Header, Cookie, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from dotenv import load_dotenv
 
@@ -11,6 +12,7 @@ app = FastAPI()
 BIN_ID = os.getenv("JSONBIN_BIN_ID")
 MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
 REPAIR_TOKEN = os.getenv("REPAIR_TOKEN")
+PAINEL_PASSWORD = os.getenv("PAINEL_PASSWORD", "admin123")  # Senha padrão: admin123
 
 if not BIN_ID or not MASTER_KEY:
     raise RuntimeError(
@@ -18,8 +20,18 @@ if not BIN_ID or not MASTER_KEY:
         "ou nas variáveis de ambiente do Render."
     )
 
+# Armazena sessões ativas (em produção, use Redis ou DB)
+active_sessions = {}
+
 JSONBIN_URL = f"https://api.jsonbin.io/v3/b/{BIN_ID}"
 JSONBIN_READ_URL = f"https://api.jsonbin.io/v3/b/{BIN_ID}/latest"
+
+
+def check_auth(session_token: str = None) -> bool:
+    """Verifica se o token de sessão é válido."""
+    if not session_token:
+        return False
+    return session_token in active_sessions
 
 
 def normalize_licenses(obj):
@@ -98,7 +110,11 @@ def save_bin(data: dict):
 
 
 @app.get("/", response_class=HTMLResponse)
-def home():
+def home(session_token: str = Cookie(None)):
+    # Verifica autenticação
+    if not check_auth(session_token):
+        return RedirectResponse(url="/login", status_code=302)
+    
     licencas = get_bin()
 
     rows = ""
@@ -185,6 +201,7 @@ def home():
     </head>
     <body>
       <h1>Painel de Licenças</h1>
+      <p><a href="/logout" style="color: red; font-weight: bold;">🚪 Sair</a></p>
 
       <h2>Criar nova licença</h2>
       <form method="post" action="/criar">
@@ -217,7 +234,11 @@ def home():
 
 
 @app.post("/criar")
-def criar(cliente: str = Form(...), expira: str = Form(...)):
+def criar(session_token: str = Cookie(None), cliente: str = Form(...), expira: str = Form(...)):
+    # Verifica autenticação
+    if not check_auth(session_token):
+        return RedirectResponse(url="/login", status_code=302)
+    
     data = get_bin()
     cliente = cliente.strip()
 
@@ -233,7 +254,11 @@ def criar(cliente: str = Form(...), expira: str = Form(...)):
 
 
 @app.post("/editar")
-def editar(cliente: str = Form(...), expira: str = Form(...), ativo: str = Form(...)):
+def editar(session_token: str = Cookie(None), cliente: str = Form(...), expira: str = Form(...), ativo: str = Form(...)):
+    # Verifica autenticação
+    if not check_auth(session_token):
+        return RedirectResponse(url="/login", status_code=302)
+    
     data = get_bin()
     cliente = cliente.strip()
 
@@ -249,7 +274,11 @@ def editar(cliente: str = Form(...), expira: str = Form(...), ativo: str = Form(
 
 
 @app.post("/limpar_hwid")
-def limpar_hwid(cliente: str = Form(...)):
+def limpar_hwid(session_token: str = Cookie(None), cliente: str = Form(...)):
+    # Verifica autenticação
+    if not check_auth(session_token):
+        return RedirectResponse(url="/login", status_code=302)
+    
     data = get_bin()
     cliente = cliente.strip()
 
@@ -261,7 +290,11 @@ def limpar_hwid(cliente: str = Form(...)):
 
 
 @app.post("/excluir")
-def excluir(cliente: str = Form(...)):
+def excluir(session_token: str = Cookie(None), cliente: str = Form(...)):
+    # Verifica autenticação
+    if not check_auth(session_token):
+        return RedirectResponse(url="/login", status_code=302)
+    
     data = get_bin()
     cliente = cliente.strip()
 
@@ -270,6 +303,128 @@ def excluir(cliente: str = Form(...)):
         save_bin(data)
 
     return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page():
+    html = """
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Login - Painel de Licenças</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100vh;
+          margin: 0;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .login-box {
+          background: white;
+          padding: 40px;
+          border-radius: 10px;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+          width: 300px;
+        }
+        h2 {
+          margin-top: 0;
+          color: #333;
+          text-align: center;
+        }
+        input {
+          width: 100%;
+          padding: 12px;
+          margin: 10px 0;
+          border: 1px solid #ddd;
+          border-radius: 5px;
+          box-sizing: border-box;
+        }
+        button {
+          width: 100%;
+          padding: 12px;
+          background: #667eea;
+          color: white;
+          border: none;
+          border-radius: 5px;
+          cursor: pointer;
+          font-size: 16px;
+          margin-top: 10px;
+        }
+        button:hover {
+          background: #5568d3;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="login-box">
+        <h2>🔐 Login</h2>
+        <form method="post" action="/login">
+          <input type="password" name="password" placeholder="Digite a senha" required autofocus>
+          <button type="submit">Entrar</button>
+        </form>
+      </div>
+    </body>
+    </html>
+    """
+    return html
+
+
+@app.post("/login")
+def do_login(response: Response, password: str = Form(...)):
+    if password == PAINEL_PASSWORD:
+        # Cria token de sessão
+        session_token = secrets.token_urlsafe(32)
+        active_sessions[session_token] = True
+        
+        # Define cookie de sessão
+        response = RedirectResponse(url="/", status_code=302)
+        response.set_cookie(key="session_token", value=session_token, httponly=True, max_age=86400)  # 24h
+        return response
+    else:
+        return HTMLResponse(
+            content="""
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta http-equiv="refresh" content="2;url=/login">
+              <style>
+                body {
+                  font-family: Arial, sans-serif;
+                  display: flex;
+                  justify-content: center;
+                  align-items: center;
+                  height: 100vh;
+                  margin: 0;
+                  background: #f44336;
+                  color: white;
+                }
+              </style>
+            </head>
+            <body>
+              <div style="text-align: center;">
+                <h1>❌ Senha incorreta!</h1>
+                <p>Redirecionando...</p>
+              </div>
+            </body>
+            </html>
+            """,
+            status_code=401
+        )
+
+
+@app.get("/logout")
+def logout(response: Response, session_token: str = Cookie(None)):
+    # Remove sessão
+    if session_token in active_sessions:
+        del active_sessions[session_token]
+    
+    # Remove cookie
+    response = RedirectResponse(url="/login", status_code=302)
+    response.delete_cookie(key="session_token")
+    return response
 
 
 @app.get("/repair")
