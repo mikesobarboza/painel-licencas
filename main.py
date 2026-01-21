@@ -14,6 +14,11 @@ MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
 REPAIR_TOKEN = os.getenv("REPAIR_TOKEN")
 PAINEL_PASSWORD = os.getenv("PAINEL_PASSWORD", "admin123")  # Senha padrão: admin123
 
+# Carregar configuração de Sites (opcional)
+SITES_BIN_ID = os.getenv('SITES_BIN_ID')
+SITES_MASTER_KEY = os.getenv('SITES_MASTER_KEY')
+SITES_CONFIGURED = SITES_BIN_ID and SITES_MASTER_KEY
+
 if not BIN_ID or not MASTER_KEY:
     raise RuntimeError(
         "Defina JSONBIN_BIN_ID e JSONBIN_MASTER_KEY no .env "
@@ -167,6 +172,62 @@ def save_bin(data: dict, servico_config: dict = None):
     )
     r.raise_for_status()
 
+
+# ============================================
+# FUNÇÕES DE SITES
+# ============================================
+
+def get_sites():
+    """Obtém dados de sites do JSONBin."""
+    if not SITES_CONFIGURED:
+        return {}
+    
+    read_url = f"https://api.jsonbin.io/v3/b/{SITES_BIN_ID}/latest"
+    
+    try:
+        r = requests.get(
+            read_url,
+            headers={"X-Master-Key": SITES_MASTER_KEY},
+            timeout=20,
+        )
+        r.raise_for_status()
+        root = r.json()
+        data = root.get("record", {})
+        
+        # Normalizar dados
+        if not isinstance(data, dict):
+            return {}
+        return data
+    except Exception as e:
+        print(f"Erro ao buscar sites: {e}")
+        return {}
+
+
+def save_sites(data: dict):
+    """Salva dados de sites no JSONBin."""
+    if not SITES_CONFIGURED:
+        return False
+    
+    if not isinstance(data, dict):
+        data = {}
+    
+    try:
+        update_url = f"https://api.jsonbin.io/v3/b/{SITES_BIN_ID}"
+        
+        r = requests.put(
+            update_url,
+            headers={
+                "X-Master-Key": SITES_MASTER_KEY,
+                "Content-Type": "application/json",
+            },
+            json=data,
+            timeout=20,
+        )
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"Erro ao salvar sites: {e}")
+        return False
 
 @app.get("/", response_class=HTMLResponse)
 def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
@@ -969,3 +1030,297 @@ def repair(
         "clientes": len(data), 
         "mensagem": f"Bin do serviço '{servico}' normalizado e salvo (sem record/metadata)."
     }
+
+
+@app.get("/api/sites")
+def api_get_sites():
+    """
+    Rota pública para a extensão buscar sites.
+    Retorna apenas sites ativos.
+    """
+    if not SITES_CONFIGURED:
+        return {"sites": []}
+    
+    sites_data = get_sites()
+    
+    # Filtrar apenas sites ativos
+    active_sites = []
+    for site_name, site_info in sites_data.items():
+        if isinstance(site_info, dict) and site_info.get("ativo", True):
+            active_sites.append({
+                "nome": site_name,
+                "dominio": site_info.get("dominio", ""),
+                "url": site_info.get("url", ""),
+                "seletores": {
+                    "valueInput": site_info.get("valueInput", ""),
+                    "generateButton": site_info.get("generateButton", ""),
+                    "pixCode": site_info.get("pixCode", ""),
+                    "copyButton": site_info.get("copyButton", ""),
+                    "closeModalButton": site_info.get("closeModalButton", ""),
+                    "openFormButton": site_info.get("openFormButton", ""),
+                }
+            })
+    
+    return {"sites": active_sites}
+
+
+
+@app.get("/sites", response_class=HTMLResponse)
+def sites_panel(session_token: str = Cookie(None)):
+    """Painel de gerenciamento de sites (requer autenticação)."""
+    if not check_auth(session_token):
+        return RedirectResponse(url="/login", status_code=302)
+    
+    if not SITES_CONFIGURED:
+        return HTMLResponse(
+            content="""
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <title>Sites QR Code - Painel de Licenças</title>
+                <style>
+                    body { font-family: Arial; background: #f5f5f5; padding: 20px; }
+                    .container { max-width: 900px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+                    .error { color: #d32f2f; background: #ffebee; padding: 20px; border-radius: 5px; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>🌐 Gerenciar Sites</h1>
+                    <div class="error">
+                        ⚠️ Sites não configurado. Configure SITES_BIN_ID e SITES_MASTER_KEY no Render.
+                    </div>
+                    <p><a href="/">← Voltar</a></p>
+                </div>
+            </body>
+            </html>
+            """,
+            status_code=503
+        )
+    
+    sites_data = get_sites()
+    
+    # Gerar linhas da tabela
+    rows = ""
+    for site_name, site_info in sites_data.items():
+        if not isinstance(site_info, dict):
+            continue
+        
+        dominio = site_info.get("dominio", "")
+        url = site_info.get("url", "")
+        ativo = site_info.get("ativo", True)
+        status_icon = "✅" if ativo else "❌"
+        status_text = "Ativo" if ativo else "Inativo"
+        
+        rows += f"""
+        <tr>
+            <td>{site_name}</td>
+            <td>{dominio}</td>
+            <td><code style="background: #f0f0f0; padding: 5px; border-radius: 3px; font-size: 12px;">{url[:40]}...</code></td>
+            <td>{status_icon} {status_text}</td>
+            <td>
+                <form method="post" action="/sites/delete" style="display: inline;" onsubmit="return confirm('Excluir {site_name}?');">
+                    <input type="hidden" name="site_name" value="{site_name}">
+                    <button type="submit" style="background: #d32f2f; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer;">🗑️ Deletar</button>
+                </form>
+            </td>
+        </tr>
+        """
+    
+    html = f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>🌐 Gerenciar Sites - Painel de Licenças</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; min-height: 100vh; }}
+            .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 40px; border-radius: 15px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }}
+            
+            .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 3px solid #667eea; }}
+            h1 {{ margin: 0; color: #333; font-size: 32px; display: flex; align-items: center; gap: 10px; }}
+            .logout {{ color: #fff; background: #b00020; font-weight: bold; text-decoration: none; padding: 12px 24px; border: none; border-radius: 8px; transition: all 0.3s; font-size: 16px; box-shadow: 0 4px 6px rgba(176, 0, 32, 0.3); }}
+            .logout:hover {{ background: #8b0019; transform: translateY(-2px); }}
+            
+            .tabs {{ display: flex; gap: 10px; margin-bottom: 30px; }}
+            .tab {{ padding: 12px 24px; background: white; border: 2px solid #dee2e6; border-radius: 8px; text-decoration: none; color: #495057; font-weight: 600; cursor: pointer; transition: all 0.3s; }}
+            .tab.active {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-color: #667eea; }}
+            .tab:hover {{ border-color: #667eea; color: #667eea; }}
+            
+            .create-section {{ background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 30px; border-radius: 12px; margin: 25px 0; border: 2px solid #dee2e6; }}
+            .create-section h2 {{ margin: 0 0 20px 0; color: #333; font-size: 24px; }}
+            
+            .form-grid {{ display: grid; grid-template-columns: 1fr 1fr auto; gap: 15px; align-items: end; }}
+            .form-group {{ display: flex; flex-direction: column; }}
+            .form-group label {{ font-weight: 600; color: #495057; margin-bottom: 8px; font-size: 14px; }}
+            .form-group input, .form-group textarea {{ padding: 12px 16px; border: 2px solid #ced4da; border-radius: 8px; font-size: 15px; transition: all 0.3s; }}
+            .form-group input:focus, .form-group textarea:focus {{ outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1); }}
+            
+            .btn-create {{ padding: 12px 32px; background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: all 0.3s; }}
+            .btn-create:hover {{ transform: translateY(-2px); }}
+            
+            .table-container {{ margin-top: 30px; overflow-x: auto; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
+            table {{ width: 100%; border-collapse: collapse; background: white; }}
+            th {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: 600; padding: 16px 12px; text-align: left; font-size: 14px; text-transform: uppercase; }}
+            td {{ padding: 14px 12px; border-bottom: 1px solid #e9ecef; font-size: 14px; }}
+            tr:hover {{ background: #f8f9fa; }}
+            
+            .hint {{ background: #fff3cd; color: #856404; padding: 12px 16px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #ffc107; font-size: 14px; }}
+            
+            @media (max-width: 768px) {{
+                .form-grid {{ grid-template-columns: 1fr; }}
+                .container {{ padding: 20px; }}
+                h1 {{ font-size: 24px; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🌐 Gerenciar Sites QR Code</h1>
+                <a href="/logout" class="logout">🚪 Sair</a>
+            </div>
+            
+            <div class="tabs">
+                <a href="/" class="tab">🔹 Licenças</a>
+                <a href="/sites" class="tab active">🌐 Sites</a>
+            </div>
+            
+            <div class="hint">
+                💡 <strong>Dica:</strong> Use F12 (DevTools) para descobrir os seletores CSS dos elementos. Inspecione: campo de valor, botão gerar, código PIX, botão copiar.
+            </div>
+            
+            <div class="create-section">
+                <h2>➕ Adicionar Novo Site</h2>
+                <form method="post" action="/sites/add">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>📛 Nome do Site</label>
+                            <input name="site_name" required placeholder="Ex: Gerador QR Code PIX">
+                        </div>
+                        <div class="form-group">
+                            <label>🌐 Domínio</label>
+                            <input name="dominio" placeholder="Ex: geradorqrcodepix.com.br">
+                        </div>
+                        <button type="submit" class="btn-create">✨ Adicionar</button>
+                    </div>
+                    
+                    <div style="margin-top: 15px;">
+                        <div class="form-group">
+                            <label>📍 Padrão URL</label>
+                            <input name="url" placeholder="Ex: https://geradorqrcodepix.com.br/*" required>
+                        </div>
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">
+                        <div class="form-group">
+                            <label>💰 Campo de Valor (opcional)</label>
+                            <input name="valueInput" placeholder="Ex: #valor">
+                        </div>
+                        <div class="form-group">
+                            <label>🔘 Botão Gerar (obrigatório)</label>
+                            <input name="generateButton" placeholder="Ex: #gerar" required>
+                        </div>
+                        <div class="form-group">
+                            <label>📊 Código PIX (obrigatório)</label>
+                            <input name="pixCode" placeholder="Ex: #codigo-pix" required>
+                        </div>
+                        <div class="form-group">
+                            <label>📋 Botão Copiar (opcional)</label>
+                            <input name="copyButton" placeholder="Ex: #copiar">
+                        </div>
+                        <div class="form-group">
+                            <label>❌ Fechar Modal (opcional)</label>
+                            <input name="closeModalButton" placeholder="Ex: .close">
+                        </div>
+                        <div class="form-group">
+                            <label>📝 Reabrir Formulário (opcional)</label>
+                            <input name="openFormButton" placeholder="Ex: #novo-formulario">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            
+            <h2 style="margin-top: 30px; margin-bottom: 15px; color: #333; font-size: 22px; display: flex; align-items: center; gap: 10px;">📋 Sites Cadastrados</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>📛 Nome</th>
+                            <th>🌐 Domínio</th>
+                            <th>📍 URL</th>
+                            <th>⚡ Status</th>
+                            <th>🔧 Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows if rows else '<tr><td colspan="5" style="text-align: center; color: #999;">Nenhum site cadastrado</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html
+
+
+@app.post("/sites/add")
+def add_site(
+    session_token: str = Cookie(None),
+    site_name: str = Form(...),
+    dominio: str = Form(""),
+    url: str = Form(...),
+    valueInput: str = Form(""),
+    generateButton: str = Form(""),
+    pixCode: str = Form(""),
+    copyButton: str = Form(""),
+    closeModalButton: str = Form(""),
+    openFormButton: str = Form("")
+):
+    """Adiciona ou atualiza um site."""
+    if not check_auth(session_token):
+        return RedirectResponse(url="/login", status_code=302)
+    
+    if not SITES_CONFIGURED:
+        return RedirectResponse(url="/sites", status_code=302)
+    
+    sites_data = get_sites()
+    site_name = site_name.strip()
+    
+    sites_data[site_name] = {
+        "dominio": dominio.strip(),
+        "url": url.strip(),
+        "valueInput": valueInput.strip(),
+        "generateButton": generateButton.strip(),
+        "pixCode": pixCode.strip(),
+        "copyButton": copyButton.strip(),
+        "closeModalButton": closeModalButton.strip(),
+        "openFormButton": openFormButton.strip(),
+        "ativo": True
+    }
+    
+    save_sites(sites_data)
+    return RedirectResponse(url="/sites", status_code=302)
+
+
+@app.post("/sites/delete")
+def delete_site(session_token: str = Cookie(None), site_name: str = Form(...)):
+    """Deleta um site."""
+    if not check_auth(session_token):
+        return RedirectResponse(url="/login", status_code=302)
+    
+    if not SITES_CONFIGURED:
+        return RedirectResponse(url="/sites", status_code=302)
+    
+    sites_data = get_sites()
+    site_name = site_name.strip()
+    
+    if site_name in sites_data:
+        del sites_data[site_name]
+        save_sites(sites_data)
+    
+    return RedirectResponse(url="/sites", status_code=302)
+
