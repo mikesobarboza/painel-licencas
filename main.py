@@ -42,7 +42,7 @@ SERVICOS["Principal"] = {
 # Carregar serviços adicionais do .env
 # Formato: NOMEDOSERVICO_BIN_ID e NOMEDOSERVICO_MASTER_KEY
 for key in os.environ:
-    if key.endswith("_BIN_ID") and key != "JSONBIN_BIN_ID":
+    if key.endswith("_BIN_ID") and key not in ("JSONBIN_BIN_ID", "SITES_BIN_ID"):
         service_prefix = key[:-7]  # Remove "_BIN_ID"
         master_key_var = f"{service_prefix}_MASTER_KEY"
         master_key = os.getenv(master_key_var)
@@ -712,6 +712,11 @@ def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
         <div class="header">
           <h1>🔐 Painel de Licenças</h1>
           <a href="/logout" class="logout">🚪 Sair</a>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin: 25px 0; flex-wrap: wrap;">
+          <a href="/" style="padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: 2px solid #667eea; border-radius: 8px; text-decoration: none; font-weight: 600; cursor: pointer; transition: all 0.3s; display: inline-block;">🔹 Licenças</a>
+          <a href="/sites" style="padding: 12px 24px; background: white; border: 2px solid #dee2e6; border-radius: 8px; text-decoration: none; color: #495057; font-weight: 600; cursor: pointer; transition: all 0.3s; display: inline-block;">🌐 Sites</a>
         </div>
 
         <div class="service-selector">
