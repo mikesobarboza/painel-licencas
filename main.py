@@ -7,10 +7,59 @@ from string import Template
 from typing import Any, Dict, List
 
 import requests
-from fastapi import Cookie, Form, Header, Query, Response
+from fastapi import Cookie, Form, Header, Query, Response, Request
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+import requests
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc):
+    return JSONResponse({"error": "not_found"}, status_code=404)
+
+# ...existing code...
+
+# =========================
+# ROTA API PIX
+# =========================
+@app.post("/api/pix")
+async def api_pix(request: Request):
+    body = await request.json()
+    required = ["uid", "key", "amount", "pid", "return_url", "pay_method", "type", "token"]
+    for field in required:
+        if field not in body:
+            return JSONResponse({"error": f"missing_{field}"}, status_code=400)
+
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "pt-BR,pt;q=0.8",
+        "content-type": "application/x-www-form-urlencoded",
+        "key": body["key"],
+        "origin": "https://d2nh82wv4qbrag.cloudfront.net",
+        "referer": "https://d2nh82wv4qbrag.cloudfront.net/",
+        "token": body["token"],
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+    }
+    data = {
+        "uid": body["uid"],
+        "key": body["key"],
+        "amount": body["amount"],
+        "pid": body["pid"],
+        "return_url": body["return_url"],
+        "pay_method": body["pay_method"],
+        "type": body["type"]
+    }
+    try:
+        resp = requests.post(
+            "https://d1yoh197nyhh3m.bzcfgm.com/api/v1/user/recharge",
+            headers=headers,
+            data=data,
+            timeout=10
+        )
+        if resp.status_code != 200:
+            return JSONResponse({"error": "upstream_error", "status": resp.status_code, "text": resp.text}, status_code=502)
+        return JSONResponse(resp.json())
+    except Exception as e:
+        return JSONResponse({"error": "internal_error", "details": str(e)}, status_code=500)
 from dotenv import load_dotenv
 
 load_dotenv()
