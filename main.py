@@ -293,6 +293,17 @@ def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
           </td>
           <td class="td-actions">
             <div class="action-buttons">
+              <button class="btn btn-edit" onclick="editProviders('{license_key}', '{servico}', '{providers_display}')">
+                ✏️ Editar
+              </button>
+              <form method="post" action="/limpar_hwid" class="inline-form"
+                    onsubmit="return confirm('🔄 Limpar HWID da licença: {key}?\\n\\nIsso permitirá que a licença seja vinculada a um novo dispositivo.');">
+                <input type="hidden" name="license_key" value="{license_key}">
+                <input type="hidden" name="servico" value="{servico}">
+                <button type="submit" class="btn btn-clear">
+                  🔄 Limpar HWID
+                </button>
+              </form>
               <form method="post" action="/excluir" class="inline-form"
                     onsubmit="return confirm('⚠️ Excluir a licença: {key}?\\n\\nEssa ação é PERMANENTE e não pode ser desfeita!');">
                 <input type="hidden" name="license_key" value="{license_key}">
@@ -633,6 +644,17 @@ def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
           cursor: not-allowed;
         }}
         
+        .btn-edit {{
+          background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+          color: white;
+          box-shadow: 0 2px 4px rgba(23, 162, 184, 0.3);
+        }}
+        
+        .btn-edit:hover {{
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(23, 162, 184, 0.4);
+        }}
+        
         .btn-clear {{
           background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
           color: #000;
@@ -683,6 +705,154 @@ def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
         
         @media (max-width: 768px) {{
           .container {{
+        
+        .modal {{
+          display: none;
+          position: fixed;
+          z-index: 1000;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0,0,0,0.7);
+        }}
+        
+        .modal-content {{
+          background: white;
+          margin: 10% auto;
+        
+        function editProviders(licenseKey, servico, currentProviders) {{
+          document.getElementById('editModal').style.display = 'block';
+          document.getElementById('editLicenseKey').value = licenseKey;
+          document.getElementById('editServico').value = servico;
+          document.getElementById('editProviders').value = currentProviders === 'Nenhum' ? '' : currentProviders;
+          document.getElementById('modalTitle').textContent = 'Editar Provedores: ' + licenseKey;
+        }}
+        
+        function closeModal() {{
+          document.getElementById('editModal').style.display = 'none';
+        }}
+        
+        window.onclick = function(event) {{
+          const modal = document.getElementById('editModal');
+          if (event.target === modal) {{
+            closeModal();
+          }}
+        }}
+          padding: 30px;
+          border-radius: 12px;
+          width: 90%;
+          max-width: 600px;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }}
+        
+        .modal-header {{
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 20px;
+          padding-bottom: 15px;
+          border-bottom: 2px solid #667eea;
+        }}
+        
+        .modal-header h2 {{
+          margin: 0;
+          color: #333;
+          font-size: 24px;
+        }}
+        
+        .close-modal {{
+          font-size: 32px;
+          font-weight: bold;
+          color: #999;
+          cursor: pointer;
+          transition: all 0.3s;
+          line-height: 1;
+        }}
+        
+        .close-modal:hover {{
+          color: #333;
+        }}
+        
+        .modal-body textarea {{
+          width: 100%;
+          padding: 12px;
+          border: 2px solid #ced4da;
+          border-radius: 8px;
+          font-size: 14px;
+          font-family: 'Courier New', monospace;
+          min-height: 120px;
+          resize: vertical;
+        }}
+        
+        .modal-body textarea:focus {{
+          outline: none;
+          border-color: #667eea;
+          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }}
+        
+        .modal-footer {{
+          display: flex;
+          gap: 10px;
+          justify-content: flex-end;
+          margin-top: 20px;
+        }}
+        
+        .btn-modal-cancel {{
+          padding: 12px 24px;
+          background: #6c757d;
+          color: white;
+          border: none;
+      
+      <!-- Modal de Edição de Provedores -->
+      <div id="editModal" class="modal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 id="modalTitle">✏️ Editar Provedores</h2>
+            <span class="close-modal" onclick="closeModal()">&times;</span>
+          </div>
+          <form method="post" action="/editar_provedores">
+            <input type="hidden" id="editLicenseKey" name="license_key">
+            <input type="hidden" id="editServico" name="servico">
+            <div class="modal-body">
+              <div class="form-group">
+                <label style="margin-bottom: 10px; font-weight: 600; color: #495057;">🎯 Provedores Permitidos</label>
+                <p style="font-size: 13px; color: #6c757d; margin-bottom: 10px;">Digite os provedores separados por vírgula. Deixe vazio para permitir todos.</p>
+                <textarea id="editProviders" name="providers" placeholder="Ex: provedor1, provedor2, provedor3"></textarea>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn-modal-cancel" onclick="closeModal()">❌ Cancelar</button>
+              <button type="submit" class="btn-modal-save">💾 Salvar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+          border-radius: 8px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.3s;
+        }}
+        
+        .btn-modal-cancel:hover {{
+          background: #5a6268;
+        }}
+        
+        .btn-modal-save {{
+          padding: 12px 24px;
+          background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+          color: white;
+          border: none;
+          border-radius: 8px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.3s;
+        }}
+        
+        .btn-modal-save:hover {{
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(40, 167, 69, 0.4);
+        }}
             padding: 20px;
           }}
           
@@ -704,7 +874,40 @@ def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
           // Atualizar campos hidden
           document.querySelector('.hidden-expira-' + cliente).value = dateInput.value;
           document.querySelector('.hidden-ativo-' + cliente).value = statusSelect.value;
-          
+          editar_provedores")
+def editar_provedores(response: Response, session_token: str = Cookie(None), license_key: str = Form(...), providers: str = Form(""), servico: str = Form("Principal")):
+    # Verifica autenticação
+    if not check_auth(session_token):
+        return RedirectResponse(url="/login", status_code=302)
+    
+    # Verificar se o serviço existe
+    if servico not in SERVICOS:
+        servico = "Principal"
+    
+    servico_config = SERVICOS[servico]
+    data = get_bin(servico_config)
+    license_key = license_key.strip()
+
+    if license_key not in data:
+        redirect_response = RedirectResponse(url=f"/?servico={servico}", status_code=302)
+        redirect_response.set_cookie(key="session_token", value=session_token, httponly=True, max_age=86400)
+        return redirect_response
+
+    # Processar provedores: separar por vírgula e limpar espaços
+    if providers.strip():
+        providers_list = [p.strip() for p in providers.split(",") if p.strip()]
+    else:
+        providers_list = []
+    
+    data[license_key]["allowedProviders"] = providers_list
+
+    save_bin(data, servico_config)
+    redirect_response = RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    redirect_response.set_cookie(key="session_token", value=session_token, httponly=True, max_age=86400)
+    return redirect_response
+
+
+@app.post("/
           // Habilitar botão
           saveBtn.disabled = false;
           saveBtn.style.opacity = '1';
