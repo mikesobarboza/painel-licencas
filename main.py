@@ -85,41 +85,51 @@ def normalize_licenses(obj):
     Normaliza qualquer bagunça do tipo:
     - record.record.record...
     - metadata em qualquer nível
-    - mistura de {"record": {...}, "clienteX": {...}} etc.
+    - mistura de {"licenses": {...}, "clienteX": {...}} etc.
 
-    Resultado final: dict plano {cliente: {expira, hwid, ativo}}
+    Resultado final: dict plano {key: {key, status, hardwareId, expiresAt, periodDays, allowedProviders, createdAt}}
     """
     if not isinstance(obj, dict):
         return {}
 
     result = {}
 
+    # Verificar se está dentro de um wrapper "record"
     rec = obj.get("record")
     if isinstance(rec, dict):
         result.update(normalize_licenses(rec))
 
+    # Verificar se há um nível "licenses"
+    licenses = obj.get("licenses")
+    if isinstance(licenses, dict):
+        result.update(normalize_licenses(licenses))
+
     for k, v in obj.items():
-        if k in ("record", "metadata"):
+        if k in ("record", "metadata", "licenses"):
             continue
 
-        # caso seja cliente real
-        if isinstance(v, dict) and any(key in v for key in ("expira", "hwid", "ativo")):
+        # Caso seja licença real com os campos esperados
+        if isinstance(v, dict) and any(key in v for key in ("key", "status", "expiresAt", "periodDays")):
             result[k] = v
             continue
 
-        # caso seja wrapper/bagunça
-        if isinstance(v, dict) and ("record" in v or "metadata" in v):
+        # Caso seja wrapper/bagunça
+        if isinstance(v, dict) and ("record" in v or "metadata" in v or "licenses" in v):
             extracted = normalize_licenses(v)
             if extracted:
                 result.update(extracted)
 
     cleaned = {}
-    for cliente, info in result.items():
+    for license_key, info in result.items():
         if isinstance(info, dict):
-            cleaned[cliente] = {
-                "expira": info.get("expira", ""),
-                "hwid": info.get("hwid", ""),
-                "ativo": info.get("ativo", True),
+            cleaned[license_key] = {
+                "key": info.get("key", license_key),
+                "status": info.get("status", "active"),
+                "hardwareId": info.get("hardwareId", None),
+                "expiresAt": info.get("expiresAt", ""),
+                "periodDays": info.get("periodDays", 30),
+                "allowedProviders": info.get("allowedProviders", []),
+                "createdAt": info.get("createdAt", ""),
             }
 
     return cleaned
@@ -243,55 +253,49 @@ def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
     licencas = get_bin(servico_config)
 
     rows = ""
-    for cliente, info in licencas.items():
-        expira = info.get("expira", "")
-        hwid = info.get("hwid", "")
-        ativo = info.get("ativo", True)
-        status_class = "status-active" if ativo else "status-inactive"
-        status_icon = "✅" if ativo else "❌"
-        status_text = "Ativo" if ativo else "Inativo"
-        hwid_display = hwid if hwid else '<span style="color: #999; font-style: italic;">Não vinculado</span>'
+    for license_key, info in licencas.items():
+        key = info.get("key", license_key)
+        status = info.get("status", "active")
+        hardware_id = info.get("hardwareId", None)
+        expires_at = info.get("expiresAt", "")
+        period_days = info.get("periodDays", 30)
+        allowed_providers = info.get("allowedProviders", [])
+        created_at = info.get("createdAt", "")
+        
+        status_class = "status-active" if status == "active" else "status-inactive"
+        status_icon = "✅" if status == "active" else "❌"
+        status_text = "Ativo" if status == "active" else "Inativo"
+        hardware_display = hardware_id if hardware_id else '<span style="color: #999; font-style: italic;">Não vinculado</span>'
+        providers_display = ", ".join(allowed_providers) if allowed_providers else "Nenhum"
 
         rows += f"""
         <tr class="license-row">
           <td class="td-cliente">
-            <div class="cliente-name">👤 {cliente}</div>
+            <div class="cliente-name">🔑 {key}</div>
+            <div style="font-size: 12px; color: #999; margin-top: 4px;">Criada em: {created_at}</div>
           </td>
           <td class="td-expira">
-            <input type="date" class="edit-date" data-cliente="{cliente}" value="{expira}" onchange="enableSaveButton('{cliente}')">
+            <div style="font-weight: 600; margin-bottom: 4px;">{expires_at}</div>
+            <div style="font-size: 12px; color: #666;">Período: {period_days} dias</div>
           </td>
-          <td class="td-hwid" title="{hwid if hwid else 'HWID não vinculado'}">
-            <div class="hwid-display">{hwid_display}</div>
+          <td class="td-hwid" title="{hardware_id if hardware_id else 'HWID não vinculado'}">
+            <div class="hwid-display">{hardware_display}</div>
+          </td>
+          <td class="td-providers" style="font-size: 13px;">
+            <div style="background: #f0f0f0; padding: 8px; border-radius: 6px; word-break: break-word;">
+              {providers_display}
+            </div>
           </td>
           <td class="td-status">
-            <select class="edit-status" data-cliente="{cliente}" onchange="enableSaveButton('{cliente}')">
-              <option value="true" {"selected" if ativo else ""}>✅ Ativo</option>
-              <option value="false" {"selected" if not ativo else ""}>❌ Inativo</option>
-            </select>
+            <div style="display: inline-block; padding: 6px 12px; border-radius: 6px; background: {'#d4edda' if status == 'active' else '#f8d7da'}; color: {'#155724' if status == 'active' else '#721c24'}; font-weight: 600; font-size: 13px;">
+              {status_icon} {status_text}
+            </div>
           </td>
           <td class="td-actions">
             <div class="action-buttons">
-              <form method="post" action="/editar" class="inline-form" id="form-{cliente}">
-                <input type="hidden" name="cliente" value="{cliente}">
-                <input type="hidden" name="servico" value="{servico}">
-                <input type="hidden" name="expira" class="hidden-expira-{cliente}" value="{expira}">
-                <input type="hidden" name="ativo" class="hidden-ativo-{cliente}" value="{"true" if ativo else "false"}">
-                <button type="submit" class="btn btn-save" id="save-{cliente}" disabled title="Salvar alterações">
-                  💾 Salvar
-                </button>
-              </form>
-              
-              <form method="post" action="/limpar_hwid" class="inline-form">
-                <input type="hidden" name="cliente" value="{cliente}">
-                <input type="hidden" name="servico" value="{servico}">
-                <button type="submit" class="btn btn-clear" title="Limpar HWID vinculado">
-                  🔓 Limpar HWID
-                </button>
-              </form>
-              
               <form method="post" action="/excluir" class="inline-form"
-                    onsubmit="return confirm('⚠️ Excluir o cliente: {cliente}?\\n\\nEssa ação é PERMANENTE e não pode ser desfeita!');">
-                <input type="hidden" name="cliente" value="{cliente}">
+                    onsubmit="return confirm('⚠️ Excluir a licença: {key}?\\n\\nEssa ação é PERMANENTE e não pode ser desfeita!');">
+                <input type="hidden" name="license_key" value="{license_key}">
                 <input type="hidden" name="servico" value="{servico}">
                 <button type="submit" class="btn btn-delete">
                   🗑️ Excluir
@@ -742,12 +746,12 @@ def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
             <input type="hidden" name="servico" value="{servico}">
             <div class="form-grid">
               <div class="form-group">
-                <label>👤 Nome do Cliente</label>
-                <input name="cliente" required placeholder="Digite o nome do cliente">
+                <label>� Chave da Licença</label>
+                <input name="license_key" required placeholder="Ex: MK-30D-202602210129-7296AF228321">
               </div>
               <div class="form-group">
                 <label>📅 Data de Expiração</label>
-                <input type="date" name="expira" required>
+                <input type="datetime-local" name="expires_at" required>
               </div>
               <button type="submit" class="btn-create">✨ Criar / Atualizar</button>
             </div>
@@ -763,9 +767,10 @@ def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
           <table>
             <thead>
               <tr>
-                <th>👤 Cliente</th>
+                <th>� Chave de Licença</th>
                 <th>📅 Data Expiração</th>
                 <th>💻 HWID</th>
+                <th>🎯 Provedores Permitidos</th>
                 <th>⚡ Status</th>
                 <th>🔧 Ações</th>
               </tr>
@@ -783,7 +788,7 @@ def home(session_token: str = Cookie(None), servico: str = Query("Principal")):
 
 
 @app.post("/criar")
-def criar(session_token: str = Cookie(None), cliente: str = Form(...), expira: str = Form(...), servico: str = Form("Principal")):
+def criar(response: Response, session_token: str = Cookie(None), license_key: str = Form(...), expires_at: str = Form(...), servico: str = Form("Principal")):
     # Verifica autenticação
     if not check_auth(session_token):
         return RedirectResponse(url="/login", status_code=302)
@@ -792,23 +797,36 @@ def criar(session_token: str = Cookie(None), cliente: str = Form(...), expira: s
     if servico not in SERVICOS:
         servico = "Principal"
     
+    from datetime import datetime
+    
     servico_config = SERVICOS[servico]
     data = get_bin(servico_config)
-    cliente = cliente.strip()
+    license_key = license_key.strip()
 
-    if cliente in data:
-        data[cliente]["expira"] = expira
-        data[cliente]["ativo"] = True
-        data[cliente].setdefault("hwid", "")
+    # Se a licença não existe, cria uma nova
+    if license_key not in data:
+        data[license_key] = {
+            "key": license_key,
+            "status": "active",
+            "hardwareId": None,
+            "expiresAt": expires_at,
+            "periodDays": 30,
+            "allowedProviders": [],
+            "createdAt": datetime.now().isoformat()
+        }
     else:
-        data[cliente] = {"expira": expira, "hwid": "", "ativo": True}
+        # Se existe, apenas atualiza a data de expiração
+        data[license_key]["expiresAt"] = expires_at
+        data[license_key]["status"] = "active"
 
     save_bin(data, servico_config)
-    return RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    redirect_response = RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    redirect_response.set_cookie(key="session_token", value=session_token, httponly=True, max_age=86400)
+    return redirect_response
 
 
 @app.post("/editar")
-def editar(session_token: str = Cookie(None), cliente: str = Form(...), expira: str = Form(...), ativo: str = Form(...), servico: str = Form("Principal")):
+def editar(response: Response, session_token: str = Cookie(None), license_key: str = Form(...), expires_at: str = Form(...), servico: str = Form("Principal")):
     # Verifica autenticação
     if not check_auth(session_token):
         return RedirectResponse(url="/login", status_code=302)
@@ -819,21 +837,23 @@ def editar(session_token: str = Cookie(None), cliente: str = Form(...), expira: 
     
     servico_config = SERVICOS[servico]
     data = get_bin(servico_config)
-    cliente = cliente.strip()
+    license_key = license_key.strip()
 
-    if cliente not in data:
-        return RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    if license_key not in data:
+        redirect_response = RedirectResponse(url=f"/?servico={servico}", status_code=302)
+        redirect_response.set_cookie(key="session_token", value=session_token, httponly=True, max_age=86400)
+        return redirect_response
 
-    data[cliente]["expira"] = expira
-    data[cliente]["ativo"] = (ativo == "true")
-    data[cliente].setdefault("hwid", "")
+    data[license_key]["expiresAt"] = expires_at
 
     save_bin(data, servico_config)
-    return RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    redirect_response = RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    redirect_response.set_cookie(key="session_token", value=session_token, httponly=True, max_age=86400)
+    return redirect_response
 
 
 @app.post("/limpar_hwid")
-def limpar_hwid(session_token: str = Cookie(None), cliente: str = Form(...), servico: str = Form("Principal")):
+def limpar_hwid(response: Response, session_token: str = Cookie(None), license_key: str = Form(...), servico: str = Form("Principal")):
     # Verifica autenticação
     if not check_auth(session_token):
         return RedirectResponse(url="/login", status_code=302)
@@ -844,17 +864,19 @@ def limpar_hwid(session_token: str = Cookie(None), cliente: str = Form(...), ser
     
     servico_config = SERVICOS[servico]
     data = get_bin(servico_config)
-    cliente = cliente.strip()
+    license_key = license_key.strip()
 
-    if cliente in data:
-        data[cliente]["hwid"] = ""
+    if license_key in data:
+        data[license_key]["hardwareId"] = None
         save_bin(data, servico_config)
 
-    return RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    redirect_response = RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    redirect_response.set_cookie(key="session_token", value=session_token, httponly=True, max_age=86400)
+    return redirect_response
 
 
 @app.post("/excluir")
-def excluir(session_token: str = Cookie(None), cliente: str = Form(...), servico: str = Form("Principal")):
+def excluir(response: Response, session_token: str = Cookie(None), license_key: str = Form(...), servico: str = Form("Principal")):
     # Verifica autenticação
     if not check_auth(session_token):
         return RedirectResponse(url="/login", status_code=302)
@@ -865,13 +887,15 @@ def excluir(session_token: str = Cookie(None), cliente: str = Form(...), servico
     
     servico_config = SERVICOS[servico]
     data = get_bin(servico_config)
-    cliente = cliente.strip()
+    license_key = license_key.strip()
 
-    if cliente in data:
-        del data[cliente]
+    if license_key in data:
+        del data[license_key]
         save_bin(data, servico_config)
 
-    return RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    redirect_response = RedirectResponse(url=f"/?servico={servico}", status_code=302)
+    redirect_response.set_cookie(key="session_token", value=session_token, httponly=True, max_age=86400)
+    return redirect_response
 
 
 @app.get("/login", response_class=HTMLResponse)
