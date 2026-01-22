@@ -12,9 +12,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import requests
-@app.exception_handler(404)
-async def not_found_handler(request: Request, exc):
-    return JSONResponse({"error": "not_found"}, status_code=404)
 
 # ...existing code...
 
@@ -73,6 +70,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Handler global 404 deve vir após a criação do app
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc):
+    return JSONResponse({"error": "not_found"}, status_code=404)
 
 BIN_ID = os.getenv("JSONBIN_BIN_ID")
 MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
