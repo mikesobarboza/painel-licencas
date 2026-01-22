@@ -301,6 +301,33 @@ def home(session_token: str = Cookie(None)):
           preview.textContent = key;
         }
 
+        function loadSites() {
+          fetch('/api/sites')
+            .then(res => res.json())
+            .then(data => {
+              const select = document.getElementById('sitesSelect');
+              select.innerHTML = '';
+              if (data.sites && data.sites.length > 0) {
+                data.sites.forEach(site => {
+                  const option = document.createElement('option');
+                  option.value = site.nome;
+                  option.textContent = site.nome + (site.dominio ? ' (' + site.dominio + ')' : '');
+                  select.appendChild(option);
+                });
+              } else {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'Nenhum site cadastrado';
+                option.disabled = true;
+                select.appendChild(option);
+              }
+            })
+            .catch(() => {
+              const select = document.getElementById('sitesSelect');
+              select.innerHTML = '<option value="">Erro ao carregar sites</option>';
+            });
+        }
+
         function editProviders(button) {
           const license = button.getAttribute('data-license');
           const providers = button.getAttribute('data-providers') || '';
@@ -344,6 +371,7 @@ def home(session_token: str = Cookie(None)):
           const form = document.getElementById('createForm');
           if (expiresInput) { expiresInput.addEventListener('input', generateLicenseFromDate); expiresInput.addEventListener('change', generateLicenseFromDate); }
           if (form) { form.addEventListener('submit', () => { const licenseInput = document.getElementById('licenseInput'); if (licenseInput && !licenseInput.value) generateLicenseFromDate(); }); }
+          loadSites();
         });
       </script>
     </head>
@@ -377,6 +405,13 @@ def home(session_token: str = Cookie(None)):
                 <div id="licensePreview" class="license-preview">Selecione a data para gerar</div>
               </div>
               <button type="submit" class="btn-create">Criar</button>
+            </div>
+            <div class="form-group" style="margin-top: 14px;">
+              <label>Sites permitidos (opcional)</label>
+              <select id="sitesSelect" name="sites" multiple style="padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; min-height: 80px;">
+                <option value="">Carregando sites...</option>
+              </select>
+              <div style="color: #6b7280; font-size: 12px; margin-top: 4px;">Deixe vazio para permitir todos os sites</div>
             </div>
           </form>
         </div>
@@ -453,6 +488,7 @@ def criar(
     session_token: str = Cookie(None),
     expires_at: str = Form(...),
     license_key: str | None = Form(None),
+    sites: str = Form(""),
 ):
     if not check_auth(session_token):
         return RedirectResponse(url="/login", status_code=302)
@@ -465,6 +501,8 @@ def criar(
     while license_key in data:
         license_key = generate_license_key(expires_at)
 
+    sites_list = [s.strip() for s in sites.split(",") if s.strip()]
+
     if license_key not in data:
         data[license_key] = {
             "key": license_key,
@@ -473,11 +511,13 @@ def criar(
             "expiresAt": expires_at,
             "periodDays": 30,
             "allowedProviders": [],
+            "allowedSites": sites_list,
             "createdAt": datetime.utcnow().isoformat(),
         }
     else:
         data[license_key]["expiresAt"] = expires_at
         data[license_key]["status"] = "active"
+        data[license_key]["allowedSites"] = sites_list
 
     save_bin(data, servico_config)
     redirect_response = RedirectResponse(url="/", status_code=302)
