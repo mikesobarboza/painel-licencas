@@ -15,6 +15,25 @@ import requests
 
 # ...existing code...
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Handler global 404 deve vir após a criação do app
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc):
+    return JSONResponse({"error": "not_found"}, status_code=404)
+
 # =========================
 # ROTA API PIX
 # =========================
@@ -57,24 +76,6 @@ async def api_pix(request: Request):
         return JSONResponse(resp.json())
     except Exception as e:
         return JSONResponse({"error": "internal_error", "details": str(e)}, status_code=500)
-from dotenv import load_dotenv
-
-load_dotenv()
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Handler global 404 deve vir após a criação do app
-@app.exception_handler(404)
-async def not_found_handler(request: Request, exc):
-    return JSONResponse({"error": "not_found"}, status_code=404)
 
 BIN_ID = os.getenv("JSONBIN_BIN_ID")
 MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
