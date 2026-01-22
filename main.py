@@ -1,6 +1,7 @@
 import os
 import html
 import secrets
+import re
 from datetime import datetime
 from string import Template
 from typing import Any, Dict, List
@@ -8,12 +9,21 @@ from typing import Any, Dict, List
 import requests
 from fastapi import Cookie, Form, Header, Query, Response
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 BIN_ID = os.getenv("JSONBIN_BIN_ID")
 MASTER_KEY = os.getenv("JSONBIN_MASTER_KEY")
@@ -691,6 +701,80 @@ def api_get_sites():
                 }
             )
     return {"sites": active_sites}
+
+
+@app.post("/api/validate-license")
+async def validate_license(request: dict):
+    """
+    Valida licença e vincula ao dispositivo na 1ª ativação.
+    Body: {"licenseKey":"...","hardwareId":"..."}
+    """
+    try:
+        license_key = (request.get("licenseKey") or "").strip()
+        hardware_id = (request.get("hardwareId") or "").strip()
+
+        if not license_key or not hardware_id:
+            return JSONResponse({"valid": False, "error": "missing_parameters"}, status_code=400)
+
+        # Validar formato MK-<periodo>D-<YYYYMMDD[HHMM]>-<HEX>
+        if not re.match(r'^MK-\d+D-\d{8,12}-[A-F0-9]{8,12}$', license_key, re.IGNORECASE):
+            return JSONResponse({"valid": False, "error": "invalid_format"}, status_code=400)
+
+        # Ler licenças do JSONBin (funções já existentes)
+        servico_config = SERVICOS["Principal"]  # contém bin_id e master_key
+        licenses = get_bin(servico_config)        # normalize_licenses retorna mapa direto
+
+        if license_key not in licenses:
+            return JSONResponse({"valid": False, "error": "license_not_found"}, status_code=404)
+
+        info = licenses[license_key]
+
+        # Revogada
+        if str(info.get("status")).lower() == "revoked":
+            return JSONResponse({"valid": False, "error": "license_revoked"}, status_code=403)
+
+        # Expirada
+        expires_at = info.get("expiresAt")
+        if expires_at:
+            try:
+                expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if expiry < datetime.utcnow():
+                    return JSONResponse({"valid": False, "error": "license_expired"}, status_code=403)
+            except Exception:
+                pass
+
+        # Vinculação de dispositivo
+        current_hwid = info.get("hardwareId")
+        if current_hwid is None:
+            # Primeira ativação
+            info["hardwareId"] = hardware_id
+            info["activatedAt"] = datetime.utcnow().isoformat()
+            licenses[license_key] = info
+            save_bin(licenses, servico_config)
+            return JSONResponse({
+                "valid": True,
+                "firstActivation": True,
+                "expiresAt": info.get("expiresAt"),
+                "periodDays": info.get("periodDays", 0),
+                "status": info.get("status", "active"),
+                "allowedProviders": info.get("allowedProviders", [])
+            })
+
+        if current_hwid != hardware_id:
+            return JSONResponse({"valid": False, "error": "device_mismatch"}, status_code=403)
+
+        # Já ativada no mesmo dispositivo
+        return JSONResponse({
+            "valid": True,
+            "firstActivation": False,
+            "expiresAt": info.get("expiresAt"),
+            "periodDays": info.get("periodDays", 0),
+            "status": info.get("status", "active"),
+            "allowedProviders": info.get("allowedProviders", [])
+        })
+
+    except Exception as e:
+        return JSONResponse({"valid": False, "error": "internal_error", "details": str(e)}, status_code=500)
 
 
 @app.get("/sites", response_class=HTMLResponse)
